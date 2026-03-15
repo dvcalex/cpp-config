@@ -1,0 +1,38 @@
+# Microsoft C++ coding style
+Language: Cpp
+BasedOnStyle: Microsoft
+
+# Basic restrictions I need
+BreakBeforeBraces: Allman
+ColumnLimit: 0
+PointerAlignment: Left
+ReferenceAlignment: Left
+SortIncludes: Never
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# Spacing
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 1
+
+# Alignment
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignOperands: true
+
+# Other
+BinPackParameters: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AccessModifierOffset: -4
+
+# C++ specific
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: true
+CompactNamespaces: true
