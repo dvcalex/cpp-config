@@ -1,31 +1,52 @@
 # Build output
 build/
+out/
+cmake-build-*/
 
-# Compiled binaries
-*.out
-*.a
-*.so
-*.dylib
-
-# Object files
+# Object and binary files
 *.o
 *.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.elf
+*.gch
+*.pch
 
-# CMake
+# CMake generated
 CMakeCache.txt
 CMakeFiles/
+CMakeScripts/
+CMakeLists.txt.user
+CMakeUserPresets.json
 cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
 Makefile
 *.cmake
 !CMakeLists.txt
+_deps/
 
 # IDE
 .vscode/
 .idea/
 *.code-workspace
+*.iml
+
+# clangd cache
+.cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
 
 # Misc
 *.swp
 *.swo
 *~
-.DS_Store

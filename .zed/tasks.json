@@ -2,12 +2,6 @@
   {
     "label": "CMake Configure (Debug)",
     "command": "cmake -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "on_success",
@@ -15,38 +9,20 @@
   {
     "label": "CMake Configure (Release)",
     "command": "cmake -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "on_success",
   },
   {
     "label": "Build (Debug)",
-    "command": "[ -d build/debug ] || cmake -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON; cmake --build build/debug",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
+    "command": "cmake -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build/debug",
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "never",
   },
   {
     "label": "Build (Release)",
-    "command": "[ -d build/release ] || cmake -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON; cmake --build build/release",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
+    "command": "cmake -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build/release",
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "never",
@@ -54,12 +30,6 @@
   {
     "label": "Run (Debug)",
     "command": "./build/debug/template_project",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "use_new_terminal": false,
@@ -67,63 +37,65 @@
   {
     "label": "Run (Release)",
     "command": "./build/release/template_project",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "use_new_terminal": false,
   },
   {
     "label": "Build & Run (Debug)",
-    "command": "[ -d build/debug ] || cmake -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON; cmake --build build/debug && ./build/debug/template_project",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
+    "command": "cmake -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build/debug && ./build/debug/template_project",
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
   },
   {
-    "label": "Clean Build (Debug)",
+    "label": "Build & Run (Release)",
+    "command": "cmake -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build/release && ./build/release/template_project",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "reveal": "always",
+  },
+  {
+    "label": "Clean (Debug)",
+    "command": "cmake --build build/debug --target clean",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "reveal": "always",
+    "hide": "on_success",
+  },
+  {
+    "label": "Clean (Release)",
+    "command": "cmake --build build/release --target clean",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "reveal": "always",
+    "hide": "on_success",
+  },
+  {
+    "label": "Clean & Rebuild (Debug)",
+    "command": "cmake --build build/debug --target clean && cmake --build build/debug",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "reveal": "always",
+  },
+  {
+    "label": "Clean & Rebuild (Release)",
+    "command": "cmake --build build/release --target clean && cmake --build build/release",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "reveal": "always",
+  },
+  {
+    "label": "Delete Build (Debug)",
     "command": "rm -rf build/debug",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "on_success",
   },
   {
-    "label": "Clean Build (Release)",
+    "label": "Delete Build (Release)",
     "command": "rm -rf build/release",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "on_success",
   },
   {
-    "label": "Clean All Builds",
+    "label": "Delete All Builds",
     "command": "rm -rf build",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "on_success",
@@ -131,25 +103,13 @@
   {
     "label": "Format Current File",
     "command": "clang-format -i \"${ZED_FILE}\"",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "never",
     "hide": "always",
   },
   {
     "label": "Format All Source Files",
-    "command": "find src -name '*.cpp' -type f -exec clang-format -i {} \\; && find include -name '*.h' -type f -exec clang-format -i {} \\;",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
+    "command": "find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i",
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
     "hide": "on_success",
@@ -157,36 +117,18 @@
   {
     "label": "Clang-Tidy Current File",
     "command": "clang-tidy -p build/debug \"${ZED_FILE}\"",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
   },
   {
     "label": "Clang-Tidy All Files",
-    "command": "find src -name '*.cpp' -type f -exec clang-tidy -p build/debug {} \\;",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
+    "command": "find src -name '*.cpp' | xargs clang-tidy -p build/debug",
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
   },
   {
     "label": "Generate .cpp Stubs from Header",
     "command": "python3 .zed/generate_cpp_stubs.py \"${ZED_RELATIVE_FILE}\"",
-    "shell": {
-      "with_arguments": {
-        "program": "bash",
-        "args": ["-c"],
-      },
-    },
     "cwd": "${ZED_WORKTREE_ROOT}",
     "reveal": "always",
   },
