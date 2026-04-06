@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Watches C++ source files and auto-rebuilds on change.
+# Pipes build errors through explainlog if available.
+# Usage: cppwatch [--no-explainlog] [project-dir]
+#   Watches src/, include/, demo/ for .cpp/.hpp/.h/.c changes.
+#   Detects build dir automatically (build/debug or build/release).
+
+# Parse flags
+NO_EXPLAINLOG=0
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        --no-explainlog) NO_EXPLAINLOG=1 ;;
+        *) POSITIONAL+=("$arg") ;;
+    esac
+done
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
+
+cleanup()
+{
+    trap - INT TERM
+    kill -- -$$ 2>/dev/null || true
+    wait 2>/dev/null || true
+    exit 130
+}
+trap cleanup INT TERM
+
+# Colors
+if [[ -z "${NO_COLOR:-}" ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RESET=$'\033[0m'
+else
+    RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
+fi
+
+# Find project root
+find_project_root()
+{
+    local dir="${1:-$PWD}"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/CMakeLists.txt" ]]; then
+            echo "$dir"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+PROJECT_ROOT=$(find_project_root "${1:-$PWD}") || {
+    echo "${RED}Error: No CMakeLists.txt found in parent directories${RESET}" >&2
+    exit 1
+}
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+# Detect build directory
+detect_build_dir()
+{
+    # Prefer debug, fall back to release, then any build/ subdir with a build.ninja or Makefile
+    for candidate in "$PROJECT_ROOT/build/debug" "$PROJECT_ROOT/build/release"; do
+        if [[ -f "$candidate/build.ninja" || -f "$candidate/Makefile" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    # Check top-level build/
+    if [[ -f "$PROJECT_ROOT/build/build.ninja" || -f "$PROJECT_ROOT/build/Makefile" ]]; then
+        echo "$PROJECT_ROOT/build"
+        return 0
+    fi
+    return 1
+}
+
+BUILD_DIR=$(detect_build_dir) || {
+    echo "${RED}Error: No build directory found. Run cmake -B build/debug first.${RESET}" >&2
+    exit 1
+}
+BUILD_TYPE=$(basename "$BUILD_DIR")
+
+HAS_EXPLAINLOG=0
+if [[ $NO_EXPLAINLOG -eq 0 ]] && command -v explainlog &>/dev/null; then
+    HAS_EXPLAINLOG=1
+fi
+
+# Debounce: skip builds if one is already running
+BUILD_LOCK="/tmp/cppwatch-${PROJECT_NAME}.lock"
+EXPLAINLOG_PID=""
+LAST_ERROR_HASH=""
+DEBOUNCE_MS=500
+LAST_BUILD_TIME=0
+
+# Cache explainlog results to avoid re-explaining identical errors
+EXPLAINLOG_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/cppwatch/${PROJECT_NAME}"
+mkdir -p "$EXPLAINLOG_CACHE"
+
+# Strip noise from build output, keeping only error-relevant lines
+filter_errors()
+{
+    # Keep error: lines and 2 lines before each for context (file/line info)
+    # Drop ninja progress, note:, "X error(s) generated", and blank lines
+    grep -B2 "error:" 2>/dev/null | \
+        grep -v -E '^\[.*\]\s|^--$|note:|errors? generated|warnings? generated|^\s*$' | \
+        head -60
+}
+
+do_build()
+{
+    # Simple lock to avoid overlapping builds
+    if [[ -f "$BUILD_LOCK" ]]; then
+        return 0
+    fi
+    touch "$BUILD_LOCK"
+    trap 'rm -f "$BUILD_LOCK"' RETURN
+
+    local start
+    start=$(date +%s%N)
+
+    echo "${BOLD}${CYAN}Building${RESET} ${DIM}($BUILD_TYPE)${RESET}..."
+
+    local output
+    local rc=0
+    output=$(cmake --build "$BUILD_DIR" 2>&1) || rc=$?
+
+    local end
+    end=$(date +%s%N)
+    local elapsed_ms=$(( (end - start) / 1000000 ))
+    local elapsed_s
+    if (( elapsed_ms < 100 )); then
+        elapsed_s="0.0"
+    elif (( elapsed_ms < 1000 )); then
+        elapsed_s="0.${elapsed_ms:0:1}"
+    else
+        elapsed_s="$(( elapsed_ms / 1000 )).$(( (elapsed_ms % 1000) / 100 ))"
+    fi
+
+    if [[ $rc -eq 0 ]]; then
+        echo "${GREEN}  ✓ Build succeeded${RESET} ${DIM}(${elapsed_s}s)${RESET}"
+        notify-send -u normal -t 5000 -a "cppwatch" \
+            "Build OK — $PROJECT_NAME" \
+            "Compiled in ${elapsed_s}s" 2>/dev/null || true
+    else
+        local error_lines
+        error_lines=$(echo "$output" | grep -c "error:" 2>/dev/null || echo "?")
+        echo "${RED}  ✗ Build failed${RESET} ${DIM}(${error_lines} error(s), ${elapsed_s}s)${RESET}"
+        echo ""
+
+        # Show build output (truncated)
+        echo "$output" | tail -40
+        echo ""
+
+        # Pipe through explainlog if available (skip if same error or already running)
+        if [[ $HAS_EXPLAINLOG -eq 1 ]]; then
+            local filtered_errors
+            filtered_errors=$(echo "$output" | filter_errors)
+            local error_hash
+            error_hash=$(echo "$filtered_errors" | md5sum | cut -c1-16)
+            local cache_file="$EXPLAINLOG_CACHE/${error_hash}.txt"
+
+            # Skip if explainlog is still running from the last failure
+            if [[ -n "$EXPLAINLOG_PID" ]] && kill -0 "$EXPLAINLOG_PID" 2>/dev/null; then
+                echo "${DIM}  explainlog: still running from previous error, skipping${RESET}"
+            # Skip if the errors are identical to what we already explained
+            elif [[ "$error_hash" == "$LAST_ERROR_HASH" ]]; then
+                echo "${DIM}  explainlog: same errors as before, skipping${RESET}"
+            # Use cached explanation if available
+            elif [[ -f "$cache_file" ]]; then
+                LAST_ERROR_HASH="$error_hash"
+                echo "${YELLOW}  explainlog ${DIM}(cached):${RESET}"
+                cat "$cache_file"
+            else
+                LAST_ERROR_HASH="$error_hash"
+                echo "${YELLOW}  explainlog:${RESET}"
+                # Send filtered errors (not full output), cache the result
+                (echo "$filtered_errors" | \
+                    explainlog --context "C++ CMake Ninja build" 2>/dev/null | \
+                    tee "$cache_file") &
+                EXPLAINLOG_PID=$!
+            fi
+        fi
+
+        notify-send -u normal -t 5000 -a "cppwatch" \
+            "Build Failed — $PROJECT_NAME" \
+            "${error_lines} error(s)" 2>/dev/null || true
+    fi
+
+    return $rc
+}
+
+# Collect watch directories (only those that exist)
+# Watch only specific subdirs to avoid duplicates from overlapping recursive watches.
+# PROJECT_ROOT is watched non-recursively (via a separate inotifywait) for CMakeLists.txt.
+WATCH_DIRS=()
+for dir in "$PROJECT_ROOT/src" "$PROJECT_ROOT/include" "$PROJECT_ROOT/demo"; do
+    [[ -d "$dir" ]] && WATCH_DIRS+=("$dir")
+done
+
+if [[ ${#WATCH_DIRS[@]} -eq 0 ]]; then
+    echo "${RED}Error: No source directories found in ${PROJECT_ROOT}${RESET}" >&2
+    exit 1
+fi
+
+echo "${BOLD}${CYAN}cppwatch${RESET} — auto-building ${PROJECT_NAME} ${DIM}(${BUILD_TYPE})${RESET}"
+if [[ $HAS_EXPLAINLOG -eq 1 ]]; then
+    echo "${DIM}  explainlog: enabled${RESET}"
+fi
+echo ""
+
+# Initial build
+do_build || true
+echo ""
+echo "Watching for changes... (Ctrl+C to stop)"
+echo ""
+
+# Watch for file changes (process substitution keeps the loop in the main shell,
+# so variables like LAST_BUILD_TIME and EXPLAINLOG_PID persist between iterations)
+while read -r dir event file; do
+    filepath="${dir}${file}"
+    relpath="${filepath#"$PROJECT_ROOT"/}"
+
+    # Time-based debounce: skip if last build was < DEBOUNCE_MS ago
+    now_ms=$(( $(date +%s%N) / 1000000 ))
+    if (( now_ms - LAST_BUILD_TIME < DEBOUNCE_MS )); then
+        continue
+    fi
+    LAST_BUILD_TIME=$now_ms
+
+    echo "${YELLOW}Changed:${RESET} ${relpath}"
+    do_build || true
+    echo ""
+done < <(
+    # Watch source subdirs recursively for code changes
+    inotifywait --monitor --recursive \
+        --event modify,create,moved_to \
+        --include '\.(cpp|hpp|h|c|cc|cxx|hxx)$' \
+        "${WATCH_DIRS[@]}" 2>/dev/null &
+    # Watch project root non-recursively for CMakeLists.txt
+    inotifywait --monitor \
+        --event modify \
+        --include 'CMakeLists\.txt$' \
+        "$PROJECT_ROOT" 2>/dev/null &
+    wait
+)

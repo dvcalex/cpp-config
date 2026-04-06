@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Watches shader directories for changes and validates GLSL via glslangValidator.
+# Usage: shadercheck [project-dir]
+#   Finds shader dirs by looking for *.vert/*.frag files under res/shaders/
+#   Sends desktop notifications on validation errors.
+
+cleanup()
+{
+    trap - INT TERM
+    kill -- -$$ 2>/dev/null || true
+    wait 2>/dev/null || true
+    exit 130
+}
+trap cleanup INT TERM
+
+# Colors
+if [[ -z "${NO_COLOR:-}" ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    RESET=$'\033[0m'
+else
+    RED="" GREEN="" YELLOW="" CYAN="" BOLD="" RESET=""
+fi
+
+# Find project root (nearest dir with CMakeLists.txt)
+find_project_root()
+{
+    local dir="${1:-$PWD}"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/CMakeLists.txt" ]]; then
+            echo "$dir"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+PROJECT_ROOT=$(find_project_root "${1:-$PWD}") || {
+    echo "${RED}Error: No CMakeLists.txt found in parent directories${RESET}" >&2
+    exit 1
+}
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+# Collect all directories containing shaders
+find_shader_dirs()
+{
+    local dirs=()
+    while IFS= read -r -d '' file; do
+        local dir
+        dir=$(dirname "$file")
+        # Deduplicate
+        local found=0
+        for d in "${dirs[@]+"${dirs[@]}"}"; do
+            if [[ "$d" == "$dir" ]]; then
+                found=1
+                break
+            fi
+        done
+        if [[ $found -eq 0 ]]; then
+            dirs+=("$dir")
+        fi
+    done < <(find "$PROJECT_ROOT" -path "*/build" -prune -o -type f \( -name "*.vert" -o -name "*.frag" -o -name "*.geom" -o -name "*.comp" -o -name "*.tesc" -o -name "*.tese" \) -print0 2>/dev/null)
+    printf '%s\n' "${dirs[@]+"${dirs[@]}"}"
+}
+
+validate_shader()
+{
+    local file="$1"
+    local relpath="${file#"$PROJECT_ROOT"/}"
+    local output
+    if output=$(glslangValidator "$file" 2>&1); then
+        echo "${GREEN}  ✓${RESET} ${relpath}"
+        return 0
+    else
+        echo "${RED}  ✗${RESET} ${relpath}"
+        # Print errors indented
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && echo "    ${RED}${line}${RESET}"
+        done <<< "$output"
+        notify-send -u normal -t 5000 -a "shadercheck" \
+            "Shader Error — $PROJECT_NAME" \
+            "$(basename "$file"): validation failed" 2>/dev/null || true
+        return 1
+    fi
+}
+
+validate_all()
+{
+    local errors=0
+    while IFS= read -r -d '' file; do
+        validate_shader "$file" || (( ++errors ))
+    done < <(find "$PROJECT_ROOT" -path "*/build" -prune -o -type f \( -name "*.vert" -o -name "*.frag" -o -name "*.geom" -o -name "*.comp" -o -name "*.tesc" -o -name "*.tese" \) -print0 2>/dev/null)
+    return $errors
+}
+
+# --- One-shot mode (no args or --check) ---
+if [[ "${2:-}" == "--check" ]]; then
+    echo "${BOLD}${CYAN}shadercheck${RESET} — validating all shaders in ${PROJECT_NAME}"
+    echo ""
+    if validate_all; then
+        echo ""
+        echo "${GREEN}All shaders valid.${RESET}"
+    else
+        echo ""
+        echo "${RED}Some shaders have errors.${RESET}"
+        exit 1
+    fi
+    exit 0
+fi
+
+# --- Watch mode (default) ---
+SHADER_DIRS=()
+while IFS= read -r dir; do
+    [[ -n "$dir" ]] && SHADER_DIRS+=("$dir")
+done < <(find_shader_dirs)
+
+if [[ ${#SHADER_DIRS[@]} -eq 0 ]]; then
+    echo "${YELLOW}Warning: No shader files found in ${PROJECT_ROOT}${RESET}" >&2
+    echo "Watching ${PROJECT_ROOT}/res/ for new shaders..." >&2
+    # Watch the res dir in case shaders are added later
+    SHADER_DIRS=("$PROJECT_ROOT/res")
+    mkdir -p "$PROJECT_ROOT/res"
+fi
+
+echo "${BOLD}${CYAN}shadercheck${RESET} — watching ${#SHADER_DIRS[@]} shader dir(s) in ${PROJECT_NAME}"
+
+# Initial validation
+echo ""
+validate_all || true
+echo ""
+echo "Watching for changes... (Ctrl+C to stop)"
+echo ""
+
+# Watch with inotifywait
+inotifywait --monitor --recursive \
+    --event modify,create,moved_to \
+    --include '\.(vert|frag|geom|comp|tesc|tese)$' \
+    "${SHADER_DIRS[@]}" 2>/dev/null |
+while read -r dir event file; do
+    filepath="${dir}${file}"
+    if [[ -f "$filepath" ]]; then
+        echo "${YELLOW}Changed:${RESET} ${filepath#"$PROJECT_ROOT"/}"
+        validate_shader "$filepath"
+        echo ""
+    fi
+done

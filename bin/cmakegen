@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Watches for new .cpp files and auto-adds them to CMakeLists.txt's add_library().
+# Usage: cmakegen [project-dir]
+#   Scans src/ for .cpp files not listed in the root CMakeLists.txt add_library() block.
+#   In watch mode (default): monitors src/ and auto-adds new files.
+#   With --check: one-shot scan, exits 1 if files are missing.
+#   With --add: one-shot scan, adds missing files and exits.
+
+cleanup()
+{
+    trap - INT TERM
+    kill -- -$$ 2>/dev/null || true
+    wait 2>/dev/null || true
+    exit 130
+}
+trap cleanup INT TERM
+
+# Colors
+if [[ -z "${NO_COLOR:-}" ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RESET=$'\033[0m'
+else
+    RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
+fi
+
+# Find project root
+find_project_root()
+{
+    local dir="${1:-$PWD}"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/CMakeLists.txt" ]]; then
+            echo "$dir"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+# Parse mode from args
+MODE="watch"
+PROJECT_ARG=""
+for arg in "$@"; do
+    case "$arg" in
+        --check) MODE="check" ;;
+        --add)   MODE="add" ;;
+        --help|-h)
+            echo "Usage: cmakegen [project-dir] [--check|--add]"
+            echo ""
+            echo "Modes:"
+            echo "  (default)   Watch src/ and auto-add new .cpp files to CMakeLists.txt"
+            echo "  --check     One-shot: report missing files, exit 1 if any"
+            echo "  --add       One-shot: add missing files to CMakeLists.txt"
+            echo ""
+            echo "  -h, --help  Show this help"
+            exit 0
+            ;;
+        *) PROJECT_ARG="$arg" ;;
+    esac
+done
+
+PROJECT_ROOT=$(find_project_root "${PROJECT_ARG:-$PWD}") || {
+    echo "${RED}Error: No CMakeLists.txt found in parent directories${RESET}" >&2
+    exit 1
+}
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+CMAKELISTS="$PROJECT_ROOT/CMakeLists.txt"
+
+# Get .cpp files currently listed in add_library()
+get_listed_sources()
+{
+    # Extract the add_library block and pull out src/*.cpp paths
+    sed -n '/add_library(/,/)/p' "$CMAKELISTS" | \
+        grep -oP 'src/\S+\.cpp' | \
+        sort
+}
+
+# Get actual .cpp files in src/
+get_actual_sources()
+{
+    find "$PROJECT_ROOT/src" -name "*.cpp" -printf "src/%P\n" 2>/dev/null | sort
+}
+
+# Find files on disk but not in CMakeLists.txt
+find_missing()
+{
+    comm -23 <(get_actual_sources) <(get_listed_sources)
+}
+
+# Add a source file to the add_library() block in CMakeLists.txt
+add_source()
+{
+    local file="$1"
+
+    # Find the last src/*.cpp line in the add_library block and insert after it
+    local last_src_line
+    last_src_line=$(grep -n 'src/.*\.cpp' "$CMAKELISTS" | tail -1 | cut -d: -f1)
+
+    if [[ -z "$last_src_line" ]]; then
+        echo "${RED}  Could not find src/*.cpp entries in add_library()${RESET}" >&2
+        return 1
+    fi
+
+    # Get the indentation of the last source line
+    local indent
+    indent=$(sed -n "${last_src_line}p" "$CMAKELISTS" | grep -oP '^\s+')
+
+    # Insert after the last source line
+    sed -i "${last_src_line}a\\${indent}${file}" "$CMAKELISTS"
+
+    echo "${GREEN}  + Added${RESET} ${file}"
+}
+
+report_status()
+{
+    local -a missing=()
+    while IFS= read -r file; do
+        [[ -n "$file" ]] && missing+=("$file")
+    done < <(find_missing)
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        echo "${GREEN}  ✓ All src/*.cpp files are listed in CMakeLists.txt${RESET}"
+        return 0
+    fi
+
+    echo "${YELLOW}  ${#missing[@]} file(s) not in CMakeLists.txt:${RESET}"
+    for file in "${missing[@]}"; do
+        echo "${RED}    - ${file}${RESET}"
+    done
+    return 1
+}
+
+# --- One-shot check mode ---
+if [[ "$MODE" == "check" ]]; then
+    echo "${BOLD}${CYAN}cmakegen${RESET} — checking ${PROJECT_NAME}"
+    echo ""
+    report_status
+    exit $?
+fi
+
+# --- One-shot add mode ---
+if [[ "$MODE" == "add" ]]; then
+    echo "${BOLD}${CYAN}cmakegen${RESET} — adding missing sources in ${PROJECT_NAME}"
+    echo ""
+
+    missing_files=()
+    while IFS= read -r file; do
+        [[ -n "$file" ]] && missing_files+=("$file")
+    done < <(find_missing)
+
+    if [[ ${#missing_files[@]} -eq 0 ]]; then
+        echo "${GREEN}  ✓ Nothing to add — CMakeLists.txt is up to date.${RESET}"
+        exit 0
+    fi
+
+    for file in "${missing_files[@]}"; do
+        add_source "$file"
+    done
+
+    echo ""
+    echo "${GREEN}Done. ${#missing_files[@]} file(s) added.${RESET}"
+    exit 0
+fi
+
+# --- Watch mode (default) ---
+SRC_DIR="$PROJECT_ROOT/src"
+if [[ ! -d "$SRC_DIR" ]]; then
+    echo "${RED}Error: No src/ directory in ${PROJECT_ROOT}${RESET}" >&2
+    exit 1
+fi
+
+echo "${BOLD}${CYAN}cmakegen${RESET} — watching src/ in ${PROJECT_NAME}"
+echo ""
+
+# Initial check
+report_status || true
+echo ""
+echo "Watching for new files... (Ctrl+C to stop)"
+echo ""
+
+# Watch for new .cpp files
+inotifywait --monitor --recursive \
+    --event create,moved_to \
+    --include '\.cpp$' \
+    "$SRC_DIR" 2>/dev/null |
+while read -r dir event file; do
+    filepath="${dir}${file}"
+    relpath="src/${filepath#"$SRC_DIR"/}"
+
+    # Check if already listed
+    if get_listed_sources | grep -qF "$relpath"; then
+        continue
+    fi
+
+    echo "${YELLOW}New file:${RESET} ${relpath}"
+    add_source "$relpath"
+
+    notify-send -u normal -t 5000 -a "cmakegen" \
+        "CMakeLists Updated — $PROJECT_NAME" \
+        "Added $relpath" 2>/dev/null || true
+    echo ""
+done

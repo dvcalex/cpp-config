@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dispatcher for C++ development tools.
+# Launches selected tools as background watchers from your project directory.
+# Usage: cpptools [--no-explainlog] [project-dir]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Parse flags
+NO_EXPLAINLOG=0
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        --no-explainlog) NO_EXPLAINLOG=1 ;;
+        *) POSITIONAL+=("$arg") ;;
+    esac
+done
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
+
+# Track child PIDs for cleanup
+CHILD_PIDS=()
+
+cleanup()
+{
+    trap - INT TERM
+    echo ""
+    echo "${BOLD}Stopping all tools...${RESET}"
+    for pid in "${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}"; do
+        kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    done
+    # Suppress "Terminated" messages from killed background jobs
+    wait 2>/dev/null || true
+    echo "Done."
+    exit 0
+}
+trap cleanup INT TERM
+
+# Colors
+if [[ -z "${NO_COLOR:-}" ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    CYAN=$'\033[0;36m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RESET=$'\033[0m'
+else
+    RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" RESET=""
+fi
+
+# Find project root
+find_project_root()
+{
+    local dir="${1:-$PWD}"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/CMakeLists.txt" ]]; then
+            echo "$dir"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
+}
+
+PROJECT_ROOT=$(find_project_root "${1:-$PWD}") || {
+    echo "${RED}Error: No CMakeLists.txt found in parent directories${RESET}" >&2
+    exit 1
+}
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+# Tool definitions: name, script, description
+TOOLS=(
+    "shadercheck:${SCRIPT_DIR}/shadercheck:Validate GLSL shaders on save"
+    "cppwatch:${SCRIPT_DIR}/cppwatch:Auto-rebuild on source changes"
+    "cmakegen:${SCRIPT_DIR}/cmakegen:Auto-add new .cpp files to CMakeLists.txt"
+)
+
+echo "${BOLD}${CYAN}cpptools${RESET} — ${PROJECT_NAME}"
+echo "${DIM}${PROJECT_ROOT}${RESET}"
+echo ""
+
+select_tools()
+{
+    SELECTED_TOOLS=()
+
+    # Display available tools
+    for i in "${!TOOLS[@]}"; do
+        IFS=':' read -r name _ desc <<< "${TOOLS[$i]}"
+        echo "  ${BOLD}[$((i + 1))]${RESET} ${name} ${DIM}— ${desc}${RESET}"
+    done
+    echo ""
+
+    # Prompt until we get valid input
+    while true; do
+        read -rp "Enable which tools? (1 2 3, ${BOLD}a${RESET}ll, ${BOLD}q${RESET}uit): " input
+
+        # Quit
+        if [[ "$input" =~ ^[qQ]$ ]]; then
+            return
+        fi
+
+        # All
+        if [[ "$input" =~ ^[aA](ll)?$ ]]; then
+            SELECTED_TOOLS=("${TOOLS[@]}")
+            return
+        fi
+
+        # Parse space-separated numbers
+        for num in $input; do
+            if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#TOOLS[@]} )); then
+                SELECTED_TOOLS+=("${TOOLS[$((num - 1))]}")
+            else
+                echo "${YELLOW}  Skipping invalid choice: ${num}${RESET}"
+            fi
+        done
+
+        if [[ ${#SELECTED_TOOLS[@]} -gt 0 ]]; then
+            return
+        fi
+
+        echo "${YELLOW}  No valid selections. Try again.${RESET}"
+    done
+}
+
+select_tools
+
+if [[ ${#SELECTED_TOOLS[@]} -eq 0 ]]; then
+    echo "${YELLOW}No tools selected. Exiting.${RESET}"
+    exit 0
+fi
+
+echo ""
+echo "${BOLD}Launching ${#SELECTED_TOOLS[@]} tool(s)...${RESET}"
+echo ""
+
+# Launch each selected tool as a background process
+for entry in "${SELECTED_TOOLS[@]}"; do
+    IFS=':' read -r name script desc <<< "$entry"
+
+    if [[ ! -x "$script" ]]; then
+        echo "${RED}  ✗ ${name}: not found or not executable${RESET}"
+        continue
+    fi
+
+    echo "${GREEN}  ▶${RESET} ${BOLD}${name}${RESET} ${DIM}— ${desc}${RESET}"
+
+    # Build extra args for this tool
+    local extra_args=()
+    if [[ "$name" == "cppwatch" && $NO_EXPLAINLOG -eq 1 ]]; then
+        extra_args+=(--no-explainlog)
+    fi
+
+    # Launch in a new process group (setsid) so cleanup can kill the group
+    setsid "$script" "${extra_args[@]+"${extra_args[@]}"}" "$PROJECT_ROOT" &
+    CHILD_PIDS+=($!)
+    disown $!
+done
+
+echo ""
+echo "${DIM}All tools running. Press Ctrl+C to stop all.${RESET}"
+echo ""
+
+# Wait for all children — if any exit, keep waiting for the rest
+wait
