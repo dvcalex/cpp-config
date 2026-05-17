@@ -1,31 +1,30 @@
 CompileFlags:
-  # Use compile_commands.json from build dir
-  CompilationDatabase: build/debug
+    # Use compile_commands.json from build dir
+    CompilationDatabase: build/debug
 
 Diagnostics:
-  # Enable clang-tidy checks
-  ClangTidy:
-    Add: []
-    CheckOptions:
-      # Inherit all settings from .clang-tidy file
-      InheritParentConfig: true
+    # Enable clang-tidy checks; reads .clang-tidy automatically
+    ClangTidy: {}
 
-  # Show diagnostics from all included headers
-  UnusedIncludes: Strict
+    # Show diagnostics from all included headers
+    UnusedIncludes: Strict
 
-  # Suppress noisy diagnostics from generated/vendored headers
-  Suppress:
-    - "pp_file_not_found"
+    # Warn when a symbol is used but its canonical header isn't directly included
+    MissingIncludes: Strict
+
+    # Suppress noisy diagnostics from generated/vendored headers
+    Suppress:
+        - "pp_file_not_found"
 
 Completion:
-  AllScopes: Yes
+    AllScopes: Yes
 
 InlayHints:
-  # Show type hints for auto variables
-  DeducedTypes: Yes
-  # Show parameter names in function calls
-  ParameterNames: Yes
+    # Show type hints for auto variables
+    DeducedTypes: Yes
+    # Show parameter names in function calls
+    ParameterNames: Yes
 
 Hover:
-  # Show more detailed information on hover
-  ShowAKA: Yes
+    # Show more detailed information on hover
+    ShowAKA: Yes

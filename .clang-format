@@ -1,18 +1,18 @@
-# Microsoft C++ coding style
 Language: Cpp
-BasedOnStyle: Microsoft
+BasedOnStyle: LLVM
 
-# Basic restrictions I need
-BreakBeforeBraces: Allman
-ColumnLimit: 0
+# Rust uses K&R style: opening braces attached, else/catch on same line as closing brace
+BreakBeforeBraces: Attach
+ColumnLimit: 120
 PointerAlignment: Left
 ReferenceAlignment: Left
 SortIncludes: Never
 
-# Indentation
+# Indentation (Rust uses 4 spaces)
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
+AccessModifierOffset: -4
 
 # Spacing
 SpaceAfterCStyleCast: false
@@ -20,19 +20,21 @@ SpaceBeforeParens: ControlStatements
 SpaceInEmptyParentheses: false
 SpacesBeforeTrailingComments: 1
 
-# Alignment
+# Alignment — Rust does not align consecutive assignments or declarations
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
-AlignOperands: true
+AlignOperands: false
 
-# Other
+# Argument packing — Rust breaks to one-per-line when args don't fit on one line
 BinPackParameters: false
-AllowShortFunctionsOnASingleLine: All
+BinPackArguments: false
+
+# Rust never collapses functions or loops to a single line
+AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
-AccessModifierOffset: -4
 
 # C++ specific
 Cpp11BracedListStyle: true
 SpaceBeforeCpp11BracedList: true
-CompactNamespaces: true
+CompactNamespaces: false
